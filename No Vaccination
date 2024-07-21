@@ -1,0 +1,70 @@
+# Load the required packages
+library(deSolve)
+library(reshape2)
+library(ggplot2)
+library(readxl)
+
+# Path to the data file
+data_path <- "C:/Users/Preethi/Desktop/LSHTM 23-24/Summer Project/data.xlsx"
+
+# Load the data from the Excel file
+states_data <- read_excel(data_path)
+
+# Print the loaded data to ensure it's correct
+print(states_data)
+
+# Function to run the simulation model
+run_simulation <- function(state_name, total_population, initial_susceptible, initial_infected, initial_recovered, lambda, gamma, birth_rate, death_rate, follow_up_duration) {
+  initial_state_values <- c(S = initial_susceptible, I = initial_infected, R = initial_recovered)
+  parameters <- c(lambda = lambda, gamma = gamma, birth_rate = birth_rate, death_rate = death_rate)
+  times <- seq(from = 0, to = follow_up_duration, by = 1)
+  
+  sir_model <- function(time, state, parameters) {
+    with(as.list(c(state, parameters)), {
+      dS <- birth_rate * total_population - lambda * S - death_rate * S
+      dI <- lambda * S - gamma * I - death_rate * I
+      dR <- gamma * I - death_rate * R
+      return(list(c(dS, dI, dR)))
+    })
+  }
+  
+  output <- as.data.frame(ode(y = initial_state_values, times = times, func = sir_model, parms = parameters))
+  output_long <- melt(as.data.frame(output), id = "time")
+  
+  # Plot the number of people in each compartment over time
+  p <- ggplot(data = output_long, aes(x = time, y = value, colour = variable, group = variable)) +
+    geom_line() +
+    xlab("Time (days)") +
+    ylab("Number of people") +
+    labs(title = paste("SIR Model for", state_name, "with birth and death rates"))
+  
+  print(p)
+}
+
+# Iterate through each state and run the simulation
+follow_up_duration <- 365  # 1 year
+
+for (i in 1:nrow(states_data)) {
+  state_name <- states_data$States[i]
+  total_population <- states_data$`Total Population`[i]
+  initial_susceptible <- states_data$`Initial Susceptible`[i]
+  initial_infected <- states_data$`Initial Infected`[i]
+  initial_recovered <- states_data$`Initial Recovered`[i]
+  lambda <- states_data$lambda[i]
+  gamma <- eval(parse(text = states_data$`Recovery Rate`[i]))  # Convert the recovery rate to numeric
+  birth_rate <- states_data$`Birth rate`[i] / 1000  # Convert annual birth rate per 1000 to annual rate
+  death_rate <- states_data$`Death rate`[i] / 1000  # Convert annual death rate per 1000 to annual rate
+  
+  # Print the parameters for each state to ensure correctness
+  print(paste("Running simulation for", state_name))
+  print(paste("Total Population:", total_population))
+  print(paste("Initial Susceptible:", initial_susceptible))
+  print(paste("Initial Infected:", initial_infected))
+  print(paste("Initial Recovered:", initial_recovered))
+  print(paste("Lambda:", lambda))
+  print(paste("Gamma:", gamma))
+  print(paste("Birth Rate:", birth_rate))
+  print(paste("Death Rate:", death_rate))
+  
+  run_simulation(state_name, total_population, initial_susceptible, initial_infected, initial_recovered, lambda, gamma, birth_rate, death_rate, follow_up_duration)
+}
