@@ -93,6 +93,13 @@ p <- ggplot(data = all_results, aes(x = time, y = value, colour = variable, grou
     labs(title = "SIR Model for Each State with 75% Vaccination Starting After 30 Days") +
     theme_bw() +
     theme(legend.position = "bottom") +
-    scale_colour_manual(values = c("S" = "red", "I" = "green", "R" = "blue"))
+    scale_colour_manual(values = c("S" = "red", "I" = "green", "R" = "blue")) +
+    theme(
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"),
+        plot.title = element_text(size = 14, face = "bold"),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10)
+    )
 
 print(p)
