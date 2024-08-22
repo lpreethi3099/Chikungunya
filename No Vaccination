@@ -1,103 +1,71 @@
-# Load the required packages
+# LOAD THE PACKAGES:
 library(deSolve)
 library(reshape2)
 library(ggplot2)
-library(readxl)
 
-# Path to the data file
-data_path <- "C:/Users/Preethi/Desktop/LSHTM 23-24/Summer Project/data.xlsx"
+# MODEL INPUTS:
 
-# Load the data from the Excel file
-states_data <- read_excel(data_path)
+# Vector storing the initial number of people in each compartment (at timestep 0)
+initial_state_values <- c(S = 43988613,  # the whole population we are modelling is susceptible to infection
+                          I = 1,          # the epidemic starts with a single infected person
+                          R = 17106683)          # there is no prior immunity in the population
 
-# Print the loaded data to ensure it's correct
-print(states_data)
+# Vector storing the parameters describing the transition rates in units of days^-1
+parameters <- c(beta = 0.32,     # the infection rate, which acts on susceptibles
+                gamma = 1/7)   # the rate of recovery, which acts on those infected
 
-# Define the vaccination coverage and start day (both set to 0 for no vaccination)
-vaccination_coverage <- 0  # 0% intended vaccination coverage
-vaccination_start_time <- 0  # Start vaccination immediately (but coverage is 0, so no effect)
+# TIMESTEPS:
 
-# Function to run the simulation model without vaccination and calculate R0, peak infection, and peak time
-run_simulation <- function(state_name, total_population, initial_susceptible, initial_infected, initial_recovered, lambda, gamma, birth_rate, death_rate, follow_up_duration) {
-    initial_state_values <- c(S = initial_susceptible, I = initial_infected, R = initial_recovered)
-    parameters <- c(lambda = lambda, gamma = gamma, birth_rate = birth_rate, death_rate = death_rate)
-    times <- seq(from = 0, to = follow_up_duration, by = 1)  # Time in years
+# Vector storing the sequence of timesteps to solve the model at
+times <- seq(from = 0, to = 365, by = 1)   # from 0 to 365 days in daily intervals
+
+# SIR MODEL FUNCTION: 
+
+# The model function takes as input arguments (in the following order): time, state and parameters
+sir_model <- function(time, state, parameters) {  
     
-    sir_model <- function(time, state, parameters) {
-        with(as.list(c(state, parameters)), {
-            dS <- birth_rate * total_population - lambda * S - death_rate * S
-            dI <- lambda * S - gamma * I - death_rate * I
-            dR <- gamma * I - death_rate * R
-            return(list(c(dS, dI, dR)))
-        })
-    }
+    with(as.list(c(state, parameters)), {   # tell R to unpack variable names from the state and parameters inputs    
+        
+        # Calculating the total population size N (the sum of the number of people in each compartment)
+        N <- S+I+R
+        
+        # Defining lambda as a function of beta and I:
+        lambda <- beta * I/N
+        
+        # The differential equations
+        dS <- -lambda * S               # people move out of (-) the S compartment at a rate lambda (force of infection)
+        dI <- lambda * S - gamma * I    # people move into (+) the I compartment from S at a rate lambda, 
+        # and move out of (-) the I compartment at a rate gamma (recovery)
+        dR <- gamma * I                 # people move into (+) the R compartment from I at a rate gamma
+        
+        # Return the number of people in the S, I and R compartments at each timestep 
+        # (in the same order as the input state variables)
+        return(list(c(dS, dI, dR))) 
+    })
     
-    output <- as.data.frame(ode(y = initial_state_values, times = times, func = sir_model, parms = parameters))
-    
-    # Calculate R0
-    R0 <- lambda / gamma
-    
-    # Calculate peak infection
-    peak_infection_time <- which.max(output$I)
-    peak_infection_value <- output$I[peak_infection_time]
-    
-    # Return the R0, peak infection value, and time
-    peak_data <- data.frame(
-        State = state_name, 
-        R0 = R0, 
-        Peak_Infection = peak_infection_value, 
-        Peak_Time = times[peak_infection_time]
-    )
-    
-    output_long <- melt(as.data.frame(output), id = "time")
-    output_long$State <- state_name
-    
-    return(list(peak_data = peak_data, output_long = output_long))
 }
 
-# Initialize data frames to collect all results and peak infection data
-peak_infection_results <- data.frame(State = character(), R0 = numeric(), Peak_Infection = numeric(), Peak_Time = numeric())
-all_results <- data.frame()
+# MODEL OUTPUT (solving the differential equations):
 
-follow_up_duration <- 200  # 200 years
+# Solving the differential equations using the ode integration algorithm
+output <- as.data.frame(ode(y = initial_state_values, 
+                            times = times, 
+                            func = sir_model,
+                            parms = parameters))
 
-for (i in 1:nrow(states_data)) {
-    state_name <- states_data$States[i]
-    total_population <- states_data$`Total Population`[i]
-    initial_susceptible <- states_data$`Initial Susceptible`[i]
-    initial_infected <- states_data$`Initial Infected`[i]
-    initial_recovered <- states_data$`Initial Recovered`[i]
-    lambda <- states_data$lambda[i]
-    gamma <- eval(parse(text = states_data$`Recovery Rate`[i]))  # Convert the recovery rate to numeric
-    birth_rate <- states_data$`Birth rate`[i] / 1000  # Convert annual birth rate per 1000 to annual rate
-    death_rate <- states_data$`Death rate`[i] / 1000  # Convert annual death rate per 1000 to annual rate
-    
-    # Run the simulation and store the R0, peak infection data
-    results <- run_simulation(state_name, total_population, initial_susceptible, initial_infected, initial_recovered, lambda, gamma, birth_rate, death_rate, follow_up_duration)
-    
-    peak_infection_results <- rbind(peak_infection_results, results$peak_data)
-    all_results <- rbind(all_results, results$output_long)
-}
+# PLOTTING THE OUTPUT
+output_long <- melt(as.data.frame(output), id = "time")                  # turn output dataset into long format
 
-# Display the table of R0, peak infections, and time to peak
-print(peak_infection_results)
+# Adding a column for the proportion of the population in each compartment at each timestep
+# One way of calculating this is dividing the number in each compartment by the total initial population size
+# We can do this in this case because our population is closed, so the population size stays the same
+# at every timestep
+output_long$proportion <- output_long$value/sum(initial_state_values)
 
-# Plot all states in a single frame using facets
-p <- ggplot(data = all_results, aes(x = time, y = value, colour = variable, group = variable)) +
-    geom_line() +
-    facet_wrap(~ State, scales = "free_y") +
-    xlab("Time (years)") +
-    ylab("Number of people") +
-    labs(title = "SIR Model for Each State without Vaccination") +
-    theme_bw() +
-    theme(legend.position = "bottom") +
-    scale_colour_manual(values = c("S" = "red", "I" = "green", "R" = "blue")) +
-    theme(
-        axis.title.x = element_text(size = 12, face = "bold"),
-        axis.title.y = element_text(size = 12, face = "bold"),
-        plot.title = element_text(size = 14, face = "bold"),
-        legend.title = element_text(size = 12),
-        legend.text = element_text(size = 10)
-    )
-
-print(p)
+# Plot this new column
+ggplot(data = output_long,                                               # specify object containing data to plot
+       aes(x = time, y = proportion, colour = variable, group = variable)) +  # assign columns to axes and groups
+    geom_line() +                                                          # represent data as lines
+    xlab("Time (days)")+                                                   # add label for x axis
+    ylab("Proportion of the population") +                                 # add label for y axis
+    labs(colour = "Compartment")                                           # add legend title
