@@ -5,8 +5,14 @@ library(ggplot2)
 
 # MODEL INPUTS:
 
+# Vaccine Coverage 
+vaccination_coverage <- 0.25
+
+# Vaccine Efficacy
+vaccine_efficacy <- 0.989
+
 # Effective vaccine coverage
-p <- 0.25  # Change coverage to 25%
+p <- vaccination_coverage * vaccine_efficacy  # Change coverage to 25%
 
 # Total population size
 N <- 61095297
@@ -52,7 +58,7 @@ sir_model <- function(time, state, parameters) {
         # Differential equations
         if (time >= 150) {  # Change vaccination start day to 150
             # Apply vaccination effect starting from day 150
-            vaccinated <- 0.25 * S * 0.015  # 25% coverage
+            vaccinated <- p * S * 0.015  # 25% coverage
             dS <- births - lambda * S - vaccinated - deaths_S  # Change in susceptible population due to infection, vaccination, births, and deaths
             dR <- gamma * I + vaccinated - deaths_R     # Change in recovered population due to recovery, vaccination, and deaths
         } else {
