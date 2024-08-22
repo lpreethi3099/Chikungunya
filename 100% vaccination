@@ -1,98 +1,101 @@
-# Load the required packages
+# LOAD THE PACKAGES:
 library(deSolve)
 library(reshape2)
 library(ggplot2)
-library(readxl)
 
-# Path to the data file
-data_path <- "C:/Users/Preethi/Desktop/LSHTM 23-24/Summer Project/data.xlsx"
+# MODEL INPUTS:
 
-# Load the data from the Excel file
-states_data <- read_excel(data_path)
+# Vaccine Coverage 
+vaccination_coverage <- 1.00
 
-# Print the loaded data to ensure it's correct
-print(states_data)
+# Vaccine Efficacy
+vaccine_efficacy <- 0.989
 
-# Define the vaccination coverage, vaccine efficacy, and start day
-vaccination_coverage <- 1.0  # 100% intended vaccination coverage
-vaccine_efficacy <- 0.989  # 98.9% efficacy
-effective_vaccination_coverage <- vaccination_coverage * vaccine_efficacy
-vaccination_start_day <- 0  # Start vaccination immediately
+# Effective vaccine coverage
+p <- vaccination_coverage * vaccine_efficacy  # Change coverage to 100%
 
-# Function to run the simulation model with vaccination starting immediately and calculate peak infection
-run_simulation <- function(state_name, total_population, initial_susceptible, initial_infected, initial_recovered, lambda, gamma, birth_rate, death_rate, follow_up_duration, effective_vaccination_coverage, vaccination_start_day) {
-    initial_state_values <- c(S = initial_susceptible, I = initial_infected, R = initial_recovered)
-    parameters <- c(lambda = lambda, gamma = gamma, birth_rate = birth_rate, death_rate = death_rate, effective_vaccination_coverage = effective_vaccination_coverage, vaccination_start_day = vaccination_start_day)
-    times <- seq(from = 0, to = follow_up_duration, by = 1)  # Time in years
+# Total population size
+N <- 61095297
+
+# Birth rate (per 1000 people per year)
+birth_rate <- 16.5 / 1000
+
+# Death rate (per 1000 people per year)
+death_rate <- 6.2 / 1000
+
+# Initial values:
+initial_susceptible <- 43988612  # Initial susceptible population
+initial_infected <- 1  # Initial infected person
+initial_recovered <- 17106683  # Initial recovered/immune population
+
+# Parameters for transition rates
+parameters <- c(beta = 0.32,      # Infection rate
+                gamma = 1/7,      # Recovery rate
+                p = p,            # Vaccine coverage (used for vaccination effect)
+                birth_rate = birth_rate,
+                death_rate = death_rate)
+
+# TIMESTEPS:
+times <- seq(from = 0, to = 365, by = 1)  # Time in days
+
+# SIR MODEL FUNCTION:
+sir_model <- function(time, state, parameters) {  
     
-    sir_model <- function(time, state, parameters) {
-        with(as.list(c(state, parameters)), {
-            if (time >= vaccination_start_day) {
-                birth_vaccination_rate <- effective_vaccination_coverage * birth_rate * total_population
-                birth_non_vaccination_rate <- (1 - effective_vaccination_coverage) * birth_rate * total_population
-            } else {
-                birth_vaccination_rate <- 0
-                birth_non_vaccination_rate <- birth_rate * total_population
-            }
-            
-            dS <- birth_non_vaccination_rate - lambda * S - death_rate * S
-            dI <- lambda * S - gamma * I - death_rate * I
-            dR <- gamma * I + birth_vaccination_rate - death_rate * R
-            return(list(c(dS, dI, dR)))
-        })
-    }
-    
-    output <- as.data.frame(ode(y = initial_state_values, times = times, func = sir_model, parms = parameters))
-    
-    # Calculate peak infection
-    peak_infection_time <- which.max(output$I)
-    peak_infection_value <- output$I[peak_infection_time]
-    
-    # Return the peak infection value and time
-    peak_data <- data.frame(State = state_name, Peak_Infection = peak_infection_value, Peak_Time = times[peak_infection_time])
-    
-    output_long <- melt(as.data.frame(output), id = "time")
-    output_long$State <- state_name
-    
-    return(list(peak_data = peak_data, output_long = output_long))
+    with(as.list(c(state, parameters)), {  # Access parameters and state variables
+        
+        # Total population size
+        N <- S + I + R
+        
+        # Infection rate (lambda)
+        lambda <- beta * I / N
+        
+        # Births and deaths per day
+        births <- birth_rate * N / 365
+        deaths_S <- death_rate * S / 365
+        deaths_I <- death_rate * I / 365
+        deaths_R <- death_rate * R / 365
+        
+        # Differential equations
+        if (time >= 150) {  # Change vaccination start day to 150
+            # Apply vaccination effect starting from day 150
+            vaccinated <- p * S * 0.015  # 75% coverage
+            dS <- births - lambda * S - vaccinated - deaths_S  # Change in susceptible population due to infection, vaccination, births, and deaths
+            dR <- gamma * I + vaccinated - deaths_R     # Change in recovered population due to recovery, vaccination, and deaths
+        } else {
+            dS <- births - lambda * S - deaths_S  # Change in susceptible population due to infection, births, and deaths
+            dR <- gamma * I - deaths_R    # Change in recovered population due to recovery and deaths
+        }
+        
+        dI <- lambda * S - gamma * I - deaths_I  # Change in infected population due to infection, recovery, and deaths
+        
+        return(list(c(dS, dI, dR)))
+    })
 }
 
-# Initialize data frames to collect all results and peak infection data
-peak_infection_results <- data.frame(State = character(), Peak_Infection = numeric(), Peak_Time = numeric())
-all_results <- data.frame()
+# MODEL OUTPUT (solving the differential equations):
+output <- as.data.frame(ode(y = c(S = initial_susceptible, I = initial_infected, R = initial_recovered), 
+                            times = times, 
+                            func = sir_model,
+                            parms = parameters))
 
-follow_up_duration <- 200  # 200 years
+# Convert output to long format for plotting
+output_long <- melt(as.data.frame(output), id = "time")
 
-for (i in 1:nrow(states_data)) {
-    state_name <- states_data$States[i]
-    total_population <- states_data$`Total Population`[i]
-    initial_susceptible <- states_data$`Initial Susceptible`[i]
-    initial_infected <- states_data$`Initial Infected`[i]
-    initial_recovered <- states_data$`Initial Recovered`[i]
-    lambda <- states_data$lambda[i]
-    gamma <- eval(parse(text = states_data$`Recovery Rate`[i]))  # Convert the recovery rate to numeric
-    birth_rate <- states_data$`Birth rate`[i] / 1000  # Convert annual birth rate per 1000 to annual rate
-    death_rate <- states_data$`Death rate`[i] / 1000  # Convert annual death rate per 1000 to annual rate
-    
-    # Run the simulation and store the peak infection data
-    results <- run_simulation(state_name, total_population, initial_susceptible, initial_infected, initial_recovered, lambda, gamma, birth_rate, death_rate, follow_up_duration, effective_vaccination_coverage, vaccination_start_day)
-    
-    peak_infection_results <- rbind(peak_infection_results, results$peak_data)
-    all_results <- rbind(all_results, results$output_long)
-}
+# Adding a column for the prevalence proportion
+output_long$prevalence <- output_long$value / sum(initial_susceptible + initial_infected + initial_recovered)
 
-# Display the table of peak infections and time to peak
-print(peak_infection_results)
+# Plot the prevalence proportion with spiral/dashed line types
+ggplot(data = output_long, aes(x = time, y = prevalence, colour = variable, linetype = variable)) +
+    geom_line(size = 1.2) +  # Make the lines a bit thicker for visibility
+    xlab("Time (days)") +
+    ylab("Prevalence (proportion)") +
+    labs(colour = "Compartment", linetype = "Compartment", title = "SIR model for 100% coverage") +
+    scale_linetype_manual(values = c("S" = "twodash", "I" = "twodash", "R" = "twodash")) +  # Spiral/dashed line types for each compartment
+    scale_color_manual(values = c("S" = "blue", "I" = "red", "R" = "green")) +  # Keep the light colors
+    theme_light()
 
-# Plot all states in a single frame using facets
-p <- ggplot(data = all_results, aes(x = time, y = value, colour = variable, group = variable)) +
-    geom_line() +
-    facet_wrap(~ State, scales = "free_y") +
-    xlab("Time (years)") +
-    ylab("Number of people") +
-    labs(title = "SIR Model for Each State with 100% Vaccination Starting Immediately") +
-    theme_bw() +
-    theme(legend.position = "bottom") +
-    scale_colour_manual(values = c("S" = "red", "I" = "green", "R" = "blue"))
-
-print(p)
+# Calculate the peak number of infected individuals and the time to peak infection
+peak_infected <- max(output$I)
+time_to_peak <- output$time[which.max(output$I)]
+print(paste("Peak number of infected individuals:", peak_infected))
+print(paste("Time to peak infection (days):", time_to_peak))
