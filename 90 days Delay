@@ -1,0 +1,101 @@
+# LOAD THE PACKAGES:
+library(deSolve)
+library(reshape2)
+library(ggplot2)
+
+# MODEL INPUTS:
+
+# Vaccine Coverage 
+vaccination_coverage <- 0.75
+
+# Vaccine Efficacy
+vaccine_efficacy <- 0.989
+
+# Effective vaccine coverage
+p <- vaccination_coverage * vaccine_efficacy  # Change coverage to 75%
+
+# Total population size
+N <- 61095297
+
+# Birth rate (per 1000 people per year)
+birth_rate <- 16.5 / 1000
+
+# Death rate (per 1000 people per year)
+death_rate <- 6.2 / 1000
+
+# Initial values:
+initial_susceptible <- 43988612  # Initial susceptible population
+initial_infected <- 1  # Initial infected person
+initial_recovered <- 17106683  # Initial recovered/immune population
+
+# Parameters for transition rates
+parameters <- c(beta = 0.32,      # Infection rate
+                gamma = 1/7,      # Recovery rate
+                p = p,            # Vaccine coverage (used for vaccination effect)
+                birth_rate = birth_rate,
+                death_rate = death_rate)
+
+# TIMESTEPS:
+times <- seq(from = 0, to = 365, by = 1)  # Time in days
+
+# SIR MODEL FUNCTION:
+sir_model <- function(time, state, parameters) {  
+    
+    with(as.list(c(state, parameters)), {  # Access parameters and state variables
+        
+        # Total population size
+        N <- S + I + R
+        
+        # Infection rate (lambda)
+        lambda <- beta * I / N
+        
+        # Births and deaths per day
+        births <- birth_rate * N / 365
+        deaths_S <- death_rate * S / 365
+        deaths_I <- death_rate * I / 365
+        deaths_R <- death_rate * R / 365
+        
+        # Differential equations
+        if (time >= 240) {  # Change vaccination start day to 240
+            # Apply vaccination effect starting from day 240
+            vaccinated <- 0.75 * S * 0.015  # 75% coverage
+            dS <- births - lambda * S - vaccinated - deaths_S  # Change in susceptible population due to infection, vaccination, births, and deaths
+            dR <- gamma * I + vaccinated - deaths_R     # Change in recovered population due to recovery, vaccination, and deaths
+        } else {
+            dS <- births - lambda * S - deaths_S  # Change in susceptible population due to infection, births, and deaths
+            dR <- gamma * I - deaths_R    # Change in recovered population due to recovery and deaths
+        }
+        
+        dI <- lambda * S - gamma * I - deaths_I  # Change in infected population due to infection, recovery, and deaths
+        
+        return(list(c(dS, dI, dR)))
+    })
+}
+
+# MODEL OUTPUT (solving the differential equations):
+output <- as.data.frame(ode(y = c(S = initial_susceptible, I = initial_infected, R = initial_recovered), 
+                            times = times, 
+                            func = sir_model,
+                            parms = parameters))
+
+# Convert output to long format for plotting
+output_long <- melt(as.data.frame(output), id = "time")
+
+# Adding a column for the prevalence proportion
+output_long$prevalence <- output_long$value / sum(initial_susceptible + initial_infected + initial_recovered)
+
+# Plot the prevalence proportion with spiral/dashed line types
+ggplot(data = output_long, aes(x = time, y = prevalence, colour = variable, linetype = variable)) +
+    geom_line(size = 1.2) +  # Make the lines a bit thicker for visibility
+    xlab("Time (days)") +
+    ylab("Prevalence (proportion)") +
+    labs(colour = "Compartment", linetype = "Compartment", title = "Model for vaccination starting on Day 240") +
+    scale_linetype_manual(values = c("S" = "twodash", "I" = "twodash", "R" = "twodash")) +  # Spiral/dashed line types for each compartment
+    scale_color_manual(values = c("S" = "blue", "I" = "red", "R" = "green")) +  # Keep the light colors
+    theme_light()
+
+# Calculate the peak number of infected individuals and the time to peak infection
+peak_infected <- max(output$I)
+time_to_peak <- output$time[which.max(output$I)]
+print(paste("Peak number of infected individuals:", peak_infected))
+print(paste("Time to peak infection (days):", time_to_peak))
